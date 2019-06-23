@@ -36,11 +36,15 @@ MY_TIME_ADJUST_IN_SECONDS: 10分前行動させるときは 10 x 60 = 600
 WAKEUP_MINUTES: ディープスリープから再起動する時間。毎時:xx分
 
 FREQ1_DURATION_MINUTES_NORMAL: ノーマル40kHzの時間。NTP同期込み。
+
 FREQ2_DURATION_MINUTES_NORMAL: ノーマル60kHzの時間。
+
 FREQ1_DURATION_MINUTES_LONG: ロング1,ロング2 40kHzの時間。
+
 FREQ2_DURATION_MINUTES_LONG: ロング1,ロング2 60kHzの時間。
 
 _ssids[] _psks[]: SSIDと事前共有鍵それぞれのリスト。
+
 _ntp_hosts[]: 同期させるNTPサーバのリスト。
 
 
