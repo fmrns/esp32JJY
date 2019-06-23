@@ -40,6 +40,10 @@ FREQ2_DURATION_MINUTES_NORMAL: ノーマル60kHzの時間。
 FREQ1_DURATION_MINUTES_LONG: ロング1,ロング2 40kHzの時間。
 FREQ2_DURATION_MINUTES_LONG: ロング1,ロング2 60kHzの時間。
 
+_ssids[] _psks[]: SSIDと事前共有鍵それぞれのリスト。
+_ntp_hosts[]: 同期させるNTPサーバのリスト。
+
+
 ## JJY
 
 [標準電波の出し方](http://jjy.nict.go.jp/jjy/trans/)
