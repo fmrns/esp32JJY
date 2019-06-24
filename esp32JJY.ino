@@ -56,14 +56,14 @@ namespace abct {
 const auto MY_TIME_ADJUST_IN_SECONDS = 0;
 
 const auto WAKEUP_MINUTES = 59; // every xx:59, 1minutes to oclock. -1: no sleep
-const auto FREQ1_DURATION_MINUTES_NORMAL =  7;  // duration in 1st freq.(40000U), including NTP syncing.
-const auto FREQ2_DURATION_MINUTES_NORMAL =  5;  // duration in 2st freq.(60000U). sleep after that.
-const auto FREQ1_DURATION_MINUTES_LONG   = 12;  // duration in 1st freq.(40000U), including NTP syncing.
-const auto FREQ2_DURATION_MINUTES_LONG   = 10;  // duration in 2st freq.(60000U). sleep after that.
 static_assert(-1 == WAKEUP_MINUTES || (0 <= WAKEUP_MINUTES && WAKEUP_MINUTES <= 59), "specify correct value.");
+const unsigned long FREQ1_DURATION_MINUTES_NORMAL =  7;  // duration in 1st freq.(40000U), including NTP syncing.
+const unsigned long FREQ2_DURATION_MINUTES_NORMAL =  5;  // duration in 2st freq.(60000U). then deepsleep.
+const unsigned long FREQ1_DURATION_MINUTES_LONG   = 12;  // duration in 1st freq.(40000U), including NTP syncing.
+const unsigned long FREQ2_DURATION_MINUTES_LONG   = 10;  // duration in 2st freq.(60000U). then deepsleep.
 
 #define OUTPIN  GPIO26  // jjy. up to your wiring and the board.
-#define SWPIN   GPIO25  // normal -> long1 -> long2 mode sw. up to your wiring and the board.
+#define SWPIN   GPIO27  // normal -> long1 -> long2 mode sw. up to your wiring and the board.
 #define LEDPIN  GPIO2   // led. off: normal, blink: long1, on: long2
 
 // east Japan: fukushima 40kHz
@@ -99,7 +99,7 @@ const auto PWM_SPEED_MODE_JJY_CARRIER = LEDC_HIGH_SPEED_MODE;
 const auto PWM_CHANNEL_JJY_CARRIER    = LEDC_CHANNEL_0;
 
 const auto PWM_DUTY_RESOLUTION_JJY_CARRIER = LEDC_TIMER_1_BIT;
-const auto PWM_DUTY_MAX_JJY_CARRIER        = (1U << PWM_DUTY_RESOLUTION_JJY_CARRIER); /* 0: 0%, .., MAX-1:<100%, MAX:100% */
+const unsigned long long PWM_DUTY_MAX_JJY_CARRIER = (1U << PWM_DUTY_RESOLUTION_JJY_CARRIER); /* 0: 0%, .., MAX-1(FF...F):<100%, MAX(100...0)):100% */
 
 class freqsStor {
   private:
@@ -320,7 +320,6 @@ class wifiProcedures {
       udpbuf[14] = 49;
       udpbuf[15] = 52;
 
-      unsigned long sentMilli;
       ntpHosts.begin();
       for (;;) {
         static WiFiUDP udp;
@@ -333,7 +332,7 @@ class wifiProcedures {
         if (udp.beginPacket(ntpHosts.get(), 123)) {
           udp.write(udpbuf, sizeof(udpbuf));
           udp.endPacket();
-          sentMilli = millis();
+          unsigned long sentMillis = millis();
           delay(100);
 
           Serial.print("Waiting for response: ");
@@ -365,10 +364,10 @@ class wifiProcedures {
             loWord = word(udpbuf[46], udpbuf[47]);
             uint32_t f = ((uint32_t) hiWord << 16) | loWord;
             unsigned long utcf = (unsigned long)((1000ULL * f) >> 32);
-            Serial.printf("%03lu, millis() = %lu\n", utcf, sentMilli);
+            Serial.printf("%03lu, millis() = %lu\n", utcf, sentMillis);
 
             currentUTC.set(utc, utcf);
-            return sentMilli;
+            return sentMillis;
           }
 
           if (1 > udp_len) {
@@ -762,8 +761,10 @@ class jjy_timecode {
       switch (get()) {
         case 0: return '0';
         case 1: return '1';
+        default: assert(false);
         case 2: return '_';
       }
+      assert(false);
     }
 
     unsigned int
@@ -771,6 +772,7 @@ class jjy_timecode {
       switch (get()) {
         case 0: return 800;
         case 1: return 500;
+        default: assert(false);
         case 2: return 200;
       }
     }
@@ -791,6 +793,7 @@ class jjy_timecode {
       if (!isApplicable(utc)) {
         update(utc);
       } else {
+        // shortcut
         _seconds = utc % 60;
       }
     }
@@ -802,9 +805,9 @@ class jjy_timecode {
 
     jjy_timecode() {
       // XXX Y2038
-      utcApplicableMin = 1561091580;
-      utcApplicableMax = 1561091580;
-      jst = new japanTime();
+      utcApplicableMin = 1561091580; // dummy
+      utcApplicableMax = 1561091580; // dummy
+      jst = new japanTime(); // placeholder
     }
 
     void
@@ -932,16 +935,19 @@ class mymode {
 
     inline void
     setJJYFreq() const { // and set LED
-      long elap = millis() - cycleStart;
+      unsigned long elap = (millis() - cycleStart) / (60 * 1000);
       switch (mode) {
         case normal:
-          pwm.setJJYFreq(elap < FREQ1_DURATION_MINUTES_NORMAL * 60UL * 1000 ? 0 : 1);
+          pwm.setJJYFreq(elap % (FREQ1_DURATION_MINUTES_NORMAL + FREQ2_DURATION_MINUTES_NORMAL)
+                         < FREQ1_DURATION_MINUTES_NORMAL ? 0 : 1);
           break;
         case long_1:
-          pwm.setJJYFreq(elap < FREQ1_DURATION_MINUTES_LONG * 60UL * 1000 ? 0 : 1);
+          pwm.setJJYFreq(elap % (FREQ1_DURATION_MINUTES_LONG + FREQ2_DURATION_MINUTES_LONG)
+                         < FREQ1_DURATION_MINUTES_LONG ? 0 : 1);
           break;
         case long_2:
-          pwm.setJJYFreq(elap < FREQ1_DURATION_MINUTES_LONG * 60UL * 1000 ? 1 : 0);
+          pwm.setJJYFreq(elap % (FREQ1_DURATION_MINUTES_LONG + FREQ2_DURATION_MINUTES_LONG)
+                         < FREQ1_DURATION_MINUTES_LONG ? 1 : 0);
           break;
       }
       switch (mode) {
@@ -960,15 +966,15 @@ class mymode {
       if (0 > (WAKEUP_MINUTES)) {
         return;
       }
-      long elap = millis() - cycleStart;
+      unsigned long elap = (millis() - cycleStart) / (60 * 1000);
       boolean sleep;
       switch (mode) {
         case normal:
-          sleep = (elap >= ((FREQ1_DURATION_MINUTES_NORMAL) + (FREQ2_DURATION_MINUTES_NORMAL)) * 60UL * 1000);
+          sleep = (elap >= FREQ1_DURATION_MINUTES_NORMAL + FREQ2_DURATION_MINUTES_NORMAL);
           break;
         case long_1:
         case long_2:
-          sleep = (elap >= ((FREQ1_DURATION_MINUTES_LONG) + (FREQ2_DURATION_MINUTES_LONG)) * 60UL * 1000);
+          sleep = (elap >= FREQ1_DURATION_MINUTES_LONG + FREQ2_DURATION_MINUTES_LONG);
           break;
       }
       if (!sleep) {
@@ -976,7 +982,7 @@ class mymode {
       }
 
       unsigned int minutes = ((utc + SECS_TZ_OFFSET) % (60 * 60)) / 60;
-      unsigned int awakeMinutes = (60 + (WAKEUP_MINUTES) - minutes) % 60;
+      unsigned int awakeMinutes = (60 + WAKEUP_MINUTES - minutes) % 60;
       Serial.printf("\nc u in %uminutes...", awakeMinutes);
       static_assert(std::numeric_limits<uint64_t>::max() >= 120 * (60ULL * 1000 * 1000), "need larger type.");
       // https://docs.espressif.com/projects/esp-idf/en/latest/api-reference/system/sleep_modes.html#_CPPv414esp_deep_sleep8uint64_t
