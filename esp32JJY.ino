@@ -3,9 +3,10 @@
    Copyright (c) 2019 Fumiyuki Shimizu
    Copyright (c) 2019 Abacus Technologies, Inc.
 
-   ESP32 core for Arduino
-     https://github.com/espressif/arduino-esp32
-     for boards manager: https://dl.espressif.com/dl/package_esp32_index.json
+   Depends:
+     ESP32 core for Arduino
+       https://github.com/espressif/arduino-esp32
+       for boards manager: https://dl.espressif.com/dl/package_esp32_index.json
 */
 /*
    NTP function is ripped from example sketch
@@ -35,18 +36,9 @@ constexpr size_t size(T (&)[N]) {
   return N;
 }
 
-#define GPIO0   0
 #define GPIO2   2 // onboard LED
-#define GPIO4   4
-#define GPIO12  12
-#define GPIO13  13
-#define GPIO14  14
-#define GPIO15  15
-#define GPIO25  25
+#define GPIO23  23
 #define GPIO26  26
-#define GPIO27  27
-#define GPIO32  32
-#define GPIO33  33
 
 namespace abct {
 
@@ -55,20 +47,22 @@ namespace abct {
 //const auto MY_TIME_ADJUST_IN_SECONDS = 10 * 60;
 const auto MY_TIME_ADJUST_IN_SECONDS = 0;
 
-const auto WAKEUP_MINUTES = 59; // every xx:59, 1minutes to oclock. -1: no sleep
+const auto WAKEUP_MINUTES = 59; // every xx:59, 1minute to oclock. -1: no sleep
 static_assert(-1 == WAKEUP_MINUTES || (0 <= WAKEUP_MINUTES && WAKEUP_MINUTES <= 59), "specify correct value.");
 const unsigned long FREQ1_DURATION_MINUTES_NORMAL =  7;  // duration in 1st freq.(40000U), including NTP syncing.
 const unsigned long FREQ2_DURATION_MINUTES_NORMAL =  5;  // duration in 2st freq.(60000U). then deepsleep.
 const unsigned long FREQ1_DURATION_MINUTES_LONG   = 12;  // duration in 1st freq.(40000U), including NTP syncing.
 const unsigned long FREQ2_DURATION_MINUTES_LONG   = 10;  // duration in 2st freq.(60000U). then deepsleep.
 
-#define OUTPIN  GPIO26  // jjy. up to your wiring and the board.
-#define SWPIN   GPIO27  // normal -> long1 -> long2 mode sw. up to your wiring and the board.
-#define LEDPIN  GPIO2   // led. off: normal, blink: long1, on: long2
-
 // east Japan: fukushima 40kHz
 // west Japan: kyushu    60kHz
 static const decltype(ledc_timer_config_t::freq_hz) _jjy_freqs[] = { 40000U, 60000U, };
+
+#define OUTPIN  GPIO26  // jjy. up to your wiring and the board.
+#define SWPIN   GPIO23  // normal -> long1 -> long2 mode sw. up to your wiring and the board.
+#define LEDPIN  GPIO2   // led. off: normal, blink: long1, on: long2
+
+static const unsigned long SUPPRESS_CHATTERLING_MILLIS = 150;
 
 #if 0 /* change to 1 and fill your values below. */
 static const char *_ssids[] = {
@@ -899,9 +893,9 @@ class jjy_timecode {
 class mymode {
   public:
     enum modeval {
-      normal = 0, // every oclock: 5min 1st jjy freq. -> 5min 2nd jjy freq.
-      long_1 = 1, // now: 10min 1st jjy freq. -> 10min 2nd jjy freq.
-      long_2 = 2, // now: 10min 2nd jjy freq. -> 10min 1st jjy freq.
+      normal = 0,
+      long_1 = 1,
+      long_2 = 2,
     };
 
   private:
@@ -963,7 +957,7 @@ class mymode {
 
     inline void
     sleepy(unsigned long utc) const {
-      if (0 > (WAKEUP_MINUTES)) {
+      if (0 > WAKEUP_MINUTES) {
         return;
       }
       unsigned long elap = (millis() - cycleStart) / (60 * 1000);
@@ -999,22 +993,82 @@ class mymode {
     }
 };
 
-
-
 static currentUnixMilliTime currentTime;
 static jjy_timecode currentTimecode;
 
-volatile int swPushed = 0;
-static unsigned long lastPushed;
-static mymode currentMode;
-// http://esp32.info/docs/esp_idf/html/dc/d35/portmacro_8h.html
-static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+//// http://esp32.info/docs/esp_idf/html/dc/d35/portmacro_8h.html
+volatile boolean _swPushed;
 IRAM_ATTR void
-swHandler() {
-  portENTER_CRITICAL_ISR(&mux);
-  ++swPushed;
-  portEXIT_CRITICAL_ISR(&mux);
+_swHandler() {
+  // critical section is not necessary. see isPushed().
+  _swPushed = true;
 }
+class button {
+  private:
+    int pin;
+    int intr;
+    boolean isrAttached;
+    unsigned long lastChange;
+    int prevRead;
+    boolean isReleased;
+
+  public:
+    button(int _pin) {
+      pin = _pin;
+      intr = digitalPinToInterrupt(pin);
+      Serial.printf("swpin: %d, intr %d\n", pin, intr);
+      pinMode(pin, INPUT_PULLUP);
+      _swPushed = false;
+      isrAttached = false;
+      lastChange = 0;
+      prevRead = HIGH;
+      isReleased = false;
+    }
+
+    boolean
+    isPushed() {
+      unsigned long mil = millis();
+      boolean rc = (_swPushed > 0);
+      if (rc) {
+        isrAttached = false;
+        detachInterrupt(intr);
+        _swPushed = false;
+        lastChange = mil;
+        prevRead = HIGH;
+        isReleased = false;
+        return rc;
+      }
+
+      if (isrAttached) {
+        return rc;
+      }
+
+      int s = digitalRead(pin);
+      boolean isTooEarly = (SUPPRESS_CHATTERLING_MILLIS > mil - lastChange);
+      boolean isChanged = (s != prevRead);
+      if (isChanged) {
+        lastChange = mil;
+        prevRead = s;
+      }
+      
+      if (!isTooEarly && s == HIGH) {
+        if (!isReleased) {
+          isReleased = true;
+          lastChange = mil;
+          prevRead = s;
+        } else {
+          isrAttached = true;
+          _swPushed = false;
+          attachInterrupt(intr, _swHandler, FALLING);
+        }
+      }
+
+      return rc;
+    }
+};
+
+static button modeSW(SWPIN);
+static mymode currentMode;
 
 void
 init_pins() {
@@ -1022,8 +1076,10 @@ init_pins() {
   Serial.println("hi.");
   Serial.printf("output pin: " STR2(OUTPIN) "(%d)\n", OUTPIN);
   Serial.printf("led pin: " STR2(LEDPIN) "(%d)\n", LEDPIN);
+  Serial.printf("sw pin: " STR2(SWPIN) "(%d), intr %d\n", SWPIN, digitalPinToInterrupt(SWPIN));
   pinMode(OUTPIN, OUTPUT);
   pinMode(LEDPIN, OUTPUT);
+  pinMode(SWPIN, INPUT_PULLUP);
   delay(100);
   for (int i = 0; i < 5; ++i) {
     digitalWrite(OUTPIN, HIGH);
@@ -1033,11 +1089,6 @@ init_pins() {
     digitalWrite(LEDPIN, LOW);
     delay(200);
   }
-
-  Serial.printf("sw pin: " STR2(SWPIN) "(%d)\n", SWPIN);
-  digitalWrite(SWPIN, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(SWPIN), swHandler, FALLING);
-  lastPushed = millis();
 }
 
 void
@@ -1070,19 +1121,15 @@ setup() {
   abct::init_pins();
   abct::pwm.reset();
   abct::init_time();
+  Serial.println("ok. let's start...");
+  Serial.printf("output pin: " STR2(OUTPIN) "(%d)\n", OUTPIN);
+  Serial.printf("led pin: " STR2(LEDPIN) "(%d)\n", LEDPIN);
+  Serial.printf("sw pin: " STR2(SWPIN) "(%d), intr %d\n", SWPIN, digitalPinToInterrupt(SWPIN));
 }
 
 void
 loop() {
-  while (abct::swPushed > 0) {
-    portENTER_CRITICAL(&abct::mux);
-    --abct::swPushed;
-    portEXIT_CRITICAL(&abct::mux);
-    unsigned long mil = millis();
-    if ((int) (mil - abct::lastPushed) < 200) {
-      continue;
-    }
-    abct::lastPushed = mil;
+  if (abct::modeSW.isPushed()) {
     abct::currentMode.next();
   }
   abct::currentMode.setJJYFreq();
