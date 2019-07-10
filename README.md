@@ -33,7 +33,9 @@ LEDPIN: 消灯: ノーマル, 点滅: ロング1, 点灯: ロング2
 
 MY_TIME_ADJUST_IN_SECONDS: 10分前行動させるときは 10 x 60 = 600
 
-WAKEUP_MINUTES: ディープスリープから再起動する時間。毎時:xx分 -1でディープスリープなしで、各モードはそれぞれの繰り返しに。
+WAKEUP_HOURS[]: ディープスリープから再起動する時間。空で毎時。
+
+WAKEUP_MINUTES: ディープスリープから再起動する時間。最短のWAKEUP_HOURS時:WAKEUP_MINUTES分に起動。 -1でディープスリープなしで、各モードはそれぞれの繰り返しに。
 
 FREQ1_DURATION_MINUTES_NORMAL: ノーマル40kHzの時間。NTP同期込み。
 
